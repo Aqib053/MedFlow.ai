@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { UserPlus, Clock, Save, X } from 'lucide-react';
+import { UserPlus, Clock, Save, X, Plus } from 'lucide-react';
 import { Department, Patient, Severity } from '../types';
 
 interface ReceptionProps {
@@ -17,8 +17,24 @@ export const Reception: React.FC<ReceptionProps> = ({ onAddPatient }) => {
     duration: '',
     unit: 'Hours',
   });
+  const [allergies, setAllergies] = useState<string[]>([]);
+  const [allergyInput, setAllergyInput] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+
+  const handleAddAllergy = (e: React.MouseEvent | React.KeyboardEvent) => {
+      e.preventDefault();
+      if (allergyInput.trim()) {
+          if (!allergies.includes(allergyInput.trim())) {
+              setAllergies([...allergies, allergyInput.trim()]);
+          }
+          setAllergyInput('');
+      }
+  };
+
+  const removeAllergy = (allergy: string) => {
+      setAllergies(allergies.filter(a => a !== allergy));
+  };
 
   const handleRegister = (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,13 +59,15 @@ export const Reception: React.FC<ReceptionProps> = ({ onAddPatient }) => {
             status: 'waiting',
             notes: [],
             admittedDate: new Date().toISOString(),
-            allergies: [],
+            allergies: allergies,
         };
 
         onAddPatient(newPatient);
         
         setSuccessMsg(`Patient ${newPatient.name} registered successfully.`);
         setFormData({ name: '', phone: '', age: '', gender: 'Male', symptom: '', duration: '', unit: 'Hours' });
+        setAllergies([]);
+        setAllergyInput('');
         setIsSubmitting(false);
 
         setTimeout(() => setSuccessMsg(''), 3000);
@@ -126,6 +144,35 @@ export const Reception: React.FC<ReceptionProps> = ({ onAddPatient }) => {
                             onChange={(e) => setFormData({...formData, phone: e.target.value})}
                         />
                     </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Known Allergies</label>
+                        <div className="flex gap-2 mb-2">
+                            <input 
+                                type="text" 
+                                className="flex-1 px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none dark:bg-slate-700 dark:border-slate-600 dark:text-white" 
+                                placeholder="e.g. Penicillin, Peanuts"
+                                value={allergyInput}
+                                onChange={(e) => setAllergyInput(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleAddAllergy(e)}
+                            />
+                            <button 
+                                type="button"
+                                onClick={handleAddAllergy}
+                                className="px-3 py-2 bg-slate-200 dark:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg hover:bg-slate-300 dark:hover:bg-slate-500 transition-colors"
+                            >
+                                <Plus size={20} />
+                            </button>
+                        </div>
+                        <div className="flex flex-wrap gap-2 min-h-[24px]">
+                            {allergies.map(alg => (
+                                <span key={alg} className="bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300 px-2 py-1 rounded-md text-xs font-bold flex items-center gap-1 border border-red-100 dark:border-red-800">
+                                    {alg}
+                                    <button type="button" onClick={() => removeAllergy(alg)} className="hover:text-red-900 dark:hover:text-red-100"><X size={12}/></button>
+                                </span>
+                            ))}
+                        </div>
+                    </div>
                 </div>
 
                 {/* Complaint Info */}
@@ -175,7 +222,11 @@ export const Reception: React.FC<ReceptionProps> = ({ onAddPatient }) => {
                 <button 
                     type="button" 
                     className="px-6 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors flex items-center gap-2"
-                    onClick={() => setFormData({ name: '', phone: '', age: '', gender: 'Male', symptom: '', duration: '', unit: 'Hours' })}
+                    onClick={() => {
+                        setFormData({ name: '', phone: '', age: '', gender: 'Male', symptom: '', duration: '', unit: 'Hours' });
+                        setAllergies([]);
+                        setAllergyInput('');
+                    }}
                 >
                     <X size={18} /> Cancel
                 </button>

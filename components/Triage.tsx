@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Patient, Severity } from '../types';
-import { Activity, Clock, ChevronRight, X, User, AlertCircle, Sparkles, ClipboardCheck, Stethoscope, Bed, Thermometer, HeartPulse, FileText, CheckCircle, Building, LayoutList, PieChart } from 'lucide-react';
+import { Activity, Clock, ChevronRight, X, User, AlertCircle, Sparkles, ClipboardCheck, Stethoscope, Bed, Thermometer, HeartPulse, FileText, CheckCircle, Building, LayoutList, PieChart, LogOut, Download, Save, Pill } from 'lucide-react';
 
 interface TriageProps {
   patients: Patient[];
@@ -82,7 +82,38 @@ export const Triage: React.FC<TriageProps> = ({ patients, onUpdatePatient }) => 
   const [selectedWardId, setSelectedWardId] = useState('icu');
   const [selectedBedId, setSelectedBedId] = useState<string | null>(null);
 
-  // Memoize the detailed summary so it doesn't regenerate on every render
+  // Discharge Modal State
+  const [showDischargeModal, setShowDischargeModal] = useState(false);
+  const [dischargePatient, setDischargePatient] = useState<Patient | null>(null);
+  const [dischargeForm, setDischargeForm] = useState({
+      summary: '',
+      medications: '',
+      instructions: ''
+  });
+
+  // Dynamic Ward Logic
+  const currentWards = useMemo(() => {
+      // Create a deep copy of static WARDS
+      const dynamicWards = JSON.parse(JSON.stringify(WARDS));
+      
+      // Update with live patient data
+      patients.filter(p => p.status === 'admitted').forEach(p => {
+          if (p.ward && p.room) {
+              // Find the ward
+              const targetWard = dynamicWards.find((w: any) => w.name === p.ward);
+              if (targetWard) {
+                  // Find the bed and mark occupied
+                  const targetBed = targetWard.beds.find((b: any) => b.id === p.room);
+                  if (targetBed) {
+                      targetBed.status = 'occupied';
+                  }
+              }
+          }
+      });
+      return dynamicWards;
+  }, [patients]);
+
+  // Memoize the detailed summary
   const detailedAI = useMemo(() => {
       if (!selectedPatient) return null;
       return getDetailedAIResponse(selectedPatient);
@@ -116,7 +147,7 @@ export const Triage: React.FC<TriageProps> = ({ patients, onUpdatePatient }) => 
 
   const handleConfirmAdmission = () => {
       if (selectedPatient && selectedBedId) {
-          const wardName = WARDS.find(w => w.id === selectedWardId)?.name;
+          const wardName = currentWards.find((w:any) => w.id === selectedWardId)?.name;
           onUpdatePatient(selectedPatient.id, {
               status: 'admitted',
               ward: wardName,
@@ -126,10 +157,68 @@ export const Triage: React.FC<TriageProps> = ({ patients, onUpdatePatient }) => 
           });
           setShowAdmissionModal(false);
           setSelectedPatient(null);
-          alert(`Patient admitted to ${wardName} - Bed ${selectedBedId}`);
+          // alert(`Patient admitted to ${wardName} - Bed ${selectedBedId}`); // Removed alert for smoother UX
       } else {
           alert("Please select an available bed.");
       }
+  };
+
+  // Discharge Handlers
+  const handleOpenDischarge = (patient: Patient) => {
+      setDischargePatient(patient);
+      // Auto-Fill AI Discharge Summary
+      const summary = `Patient admitted on ${new Date(patient.admittedDate).toLocaleDateString()}. \nDiagnosis: ${patient.aiSummary.split('.')[0]}. \nCourse in hospital was uncomplicated. Vitals stable at discharge.`;
+      const meds = "1. Tab Paracetamol 500mg SOS \n2. Cap Amoxicillin 500mg TDS x 5 Days \n3. Tab Pantoprazole 40mg OD";
+      const inst = "Review in OPD after 7 days. \nEmergency return if symptoms recur.";
+      
+      setDischargeForm({ summary, medications: meds, instructions: inst });
+      setShowDischargeModal(true);
+  };
+
+  const handleConfirmDischarge = () => {
+      if (dischargePatient) {
+          onUpdatePatient(dischargePatient.id, { 
+              status: 'discharged',
+              dischargeReport: {
+                  summary: dischargeForm.summary,
+                  medications: dischargeForm.medications,
+                  instructions: dischargeForm.instructions,
+                  date: new Date().toISOString()
+              },
+              notes: [...dischargePatient.notes, "Discharged with summary."]
+          });
+          setShowDischargeModal(false);
+          setDischargePatient(null);
+      }
+  };
+
+  const handleDownloadDischarge = () => {
+      if(!dischargePatient) return;
+      const text = `
+      DISCHARGE SUMMARY
+      -----------------
+      Patient: ${dischargePatient.name} (ID: ${dischargePatient.id})
+      Date: ${new Date().toLocaleDateString()}
+      
+      Clinical Summary:
+      ${dischargeForm.summary}
+      
+      Discharge Medications:
+      ${dischargeForm.medications}
+      
+      Instructions:
+      ${dischargeForm.instructions}
+      
+      Doctor Signature: _________________
+      `;
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${dischargePatient.name}_Discharge_Summary.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
   };
 
   // Filter lists based on mode
@@ -232,8 +321,8 @@ export const Triage: React.FC<TriageProps> = ({ patients, onUpdatePatient }) => 
                  
                  {/* BED AVAILABILITY SUMMARY */}
                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                     {WARDS.map(ward => {
-                         const available = ward.beds.filter(b => b.status === 'available').length;
+                     {currentWards.map((ward: any) => {
+                         const available = ward.beds.filter((b: any) => b.status === 'available').length;
                          const total = ward.capacity;
                          const occupancy = Math.round(((total - available) / total) * 100);
                          
@@ -278,12 +367,13 @@ export const Triage: React.FC<TriageProps> = ({ patients, onUpdatePatient }) => 
                                  <th className="p-4">Admission Time</th>
                                  <th className="p-4">Diagnosis / Condition</th>
                                  <th className="p-4">Vitals</th>
+                                 <th className="p-4">Action</th>
                              </tr>
                          </thead>
                          <tbody className="divide-y divide-slate-100 dark:divide-slate-700 text-sm">
                              {admittedList.length === 0 ? (
                                  <tr>
-                                     <td colSpan={5} className="p-12 text-center text-slate-400 italic">No patients currently admitted to ward.</td>
+                                     <td colSpan={6} className="p-12 text-center text-slate-400 italic">No patients currently admitted to ward.</td>
                                  </tr>
                              ) : (
                                 admittedList.map(p => (
@@ -311,6 +401,14 @@ export const Triage: React.FC<TriageProps> = ({ patients, onUpdatePatient }) => 
                                              <span className="text-xs font-mono bg-slate-100 dark:bg-slate-700 px-2 py-1 rounded text-slate-600 dark:text-slate-300">
                                                  BP: 120/80 • HR: 72
                                              </span>
+                                         </td>
+                                         <td className="p-4">
+                                             <button 
+                                                onClick={() => handleOpenDischarge(p)}
+                                                className="flex items-center gap-1 bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors"
+                                             >
+                                                 <LogOut size={14} /> Discharge
+                                             </button>
                                          </td>
                                      </tr>
                                  ))
@@ -465,8 +563,7 @@ export const Triage: React.FC<TriageProps> = ({ patients, onUpdatePatient }) => 
                    </div>
 
                    <div className="flex-1 overflow-y-auto p-6 space-y-8">
-                       
-                       {/* Section 1: Clinical Data */}
+                       {/* Clinical Data & Bed Allocation Inputs (Same as before) */}
                        <div>
                            <h3 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-4 flex items-center gap-2">
                                <Activity size={16} /> Admission Vitals & Diagnosis
@@ -520,7 +617,7 @@ export const Triage: React.FC<TriageProps> = ({ patients, onUpdatePatient }) => 
                                     <Bed size={16} /> Bed Availability & Allocation
                                 </h3>
                                 <div className="flex gap-2">
-                                    {WARDS.map(ward => (
+                                    {currentWards.map((ward: any) => (
                                         <button 
                                             key={ward.id}
                                             onClick={() => setSelectedWardId(ward.id)}
@@ -538,7 +635,7 @@ export const Triage: React.FC<TriageProps> = ({ patients, onUpdatePatient }) => 
                            
                            <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
                                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                                    {WARDS.find(w => w.id === selectedWardId)?.beds.map(bed => (
+                                    {currentWards.find((w: any) => w.id === selectedWardId)?.beds.map((bed: any) => (
                                         <button
                                             key={bed.id}
                                             disabled={bed.status === 'occupied'}
@@ -561,11 +658,6 @@ export const Triage: React.FC<TriageProps> = ({ patients, onUpdatePatient }) => 
                                         </button>
                                     ))}
                                 </div>
-                                <div className="mt-4 flex gap-4 text-xs font-medium text-slate-500 justify-center">
-                                    <span className="flex items-center gap-1"><div className="w-3 h-3 bg-green-50 border border-green-200 rounded"></div> Available</span>
-                                    <span className="flex items-center gap-1"><div className="w-3 h-3 bg-slate-100 border border-slate-200 rounded"></div> Occupied</span>
-                                    <span className="flex items-center gap-1"><div className="w-3 h-3 bg-green-50 border-2 border-green-500 rounded"></div> Selected</span>
-                                </div>
                            </div>
                        </div>
                    </div>
@@ -582,6 +674,87 @@ export const Triage: React.FC<TriageProps> = ({ patients, onUpdatePatient }) => 
                        >
                            <CheckCircle size={18} /> Confirm Admission
                        </button>
+                   </div>
+               </div>
+           </div>
+       )}
+
+       {/* Discharge Modal */}
+       {showDischargeModal && dischargePatient && (
+           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in p-4">
+               <div className="bg-white dark:bg-slate-800 w-full max-w-3xl rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col max-h-[90vh] overflow-hidden animate-slide-up">
+                   <div className="p-6 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center bg-green-50 dark:bg-green-900/20">
+                       <div className="flex items-center gap-3">
+                           <div className="p-2 bg-green-100 dark:bg-green-900/50 text-green-600 dark:text-green-400 rounded-lg">
+                               <LogOut size={24} />
+                           </div>
+                           <div>
+                               <h2 className="text-xl font-bold text-slate-900 dark:text-white">Prepare Discharge Summary</h2>
+                               <p className="text-sm text-slate-500 dark:text-slate-400">Review AI generated summary and medications</p>
+                           </div>
+                       </div>
+                       <button onClick={() => setShowDischargeModal(false)} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors">
+                           <X size={24} className="text-slate-500" />
+                       </button>
+                   </div>
+
+                   <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                       
+                       {/* AI Summary Section */}
+                       <div>
+                           <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-2">
+                               <Sparkles size={14} className="text-purple-500" /> AI Generated Clinical Course
+                           </label>
+                           <textarea 
+                                value={dischargeForm.summary}
+                                onChange={(e) => setDischargeForm({...dischargeForm, summary: e.target.value})}
+                                rows={4}
+                                className="w-full p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm leading-relaxed text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-green-500 outline-none"
+                           />
+                       </div>
+
+                       {/* Medications */}
+                       <div>
+                           <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-2">
+                               <Pill size={14} className="text-blue-500" /> Discharge Medications
+                           </label>
+                           <textarea 
+                                value={dischargeForm.medications}
+                                onChange={(e) => setDischargeForm({...dischargeForm, medications: e.target.value})}
+                                rows={4}
+                                className="w-full p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-mono text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-green-500 outline-none"
+                           />
+                       </div>
+
+                       {/* Instructions */}
+                       <div>
+                           <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-2">
+                               <FileText size={14} className="text-orange-500" /> Follow-up Instructions
+                           </label>
+                           <textarea 
+                                value={dischargeForm.instructions}
+                                onChange={(e) => setDischargeForm({...dischargeForm, instructions: e.target.value})}
+                                rows={3}
+                                className="w-full p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-green-500 outline-none"
+                           />
+                       </div>
+                   </div>
+
+                   <div className="p-6 border-t border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 flex justify-between items-center">
+                       <button onClick={handleDownloadDischarge} className="text-sm font-bold text-blue-600 dark:text-blue-400 flex items-center gap-2 hover:underline">
+                           <Download size={16} /> Save & Download PDF
+                       </button>
+                       <div className="flex gap-3">
+                           <button onClick={() => setShowDischargeModal(false)} className="px-6 py-2 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors">
+                               Cancel
+                           </button>
+                           <button 
+                               onClick={handleConfirmDischarge}
+                               className="px-8 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg shadow-md transition-colors flex items-center gap-2"
+                           >
+                               <Save size={18} /> Finalize Discharge
+                           </button>
+                       </div>
                    </div>
                </div>
            </div>

@@ -55,6 +55,12 @@ export interface Patient {
   ward?: string;
   room?: string;
   condition?: string;
+  dischargeReport?: {
+      summary: string;
+      medications: string;
+      instructions: string;
+      date: string;
+  };
 }
 
 export interface AnalysisResult {
