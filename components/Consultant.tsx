@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Patient, Role, Order } from '../types';
-import { Search, Filter, AlertTriangle, FileText, CheckCircle, Mic, Square, Sparkles, Send, Plus, Trash2, MessageSquare, Activity, TestTube, Calculator, ArrowRightLeft, Video, Thermometer, Download, Printer, Save, AlertOctagon, Zap, TrendingUp, TrendingDown, Info, Bot, User, LayoutGrid, List, ArrowLeft, Bed, Users } from 'lucide-react';
+import { Search, Filter, AlertTriangle, FileText, CheckCircle, Mic, Square, Sparkles, Send, Plus, Trash2, MessageSquare, Activity, TestTube, Calculator, ArrowRightLeft, Video, Thermometer, Download, Printer, Save, AlertOctagon, Zap, TrendingUp, TrendingDown, Info, Bot, User, LayoutGrid, List, ArrowLeft, Bed, Users, Clipboard, Pill } from 'lucide-react';
 
 interface ConsultantProps {
   patients: Patient[];
@@ -21,6 +21,13 @@ interface ChatMessage {
     sender: 'user' | 'ai';
     text: string;
     time: string;
+}
+
+interface EMRData {
+    symptoms: string;
+    diagnosis: string;
+    vitals: string;
+    plan: string;
 }
 
 // Add Webkit Speech Recognition Type Support
@@ -51,6 +58,11 @@ export const Consultant: React.FC<ConsultantProps> = ({ patients, userRole, init
   const [transcript, setTranscript] = useState('');
   const [aiSummary, setAiSummary] = useState('');
   const recognitionRef = useRef<any>(null);
+
+  // Structured Voice-to-EMR State
+  const [emrData, setEmrData] = useState<EMRData>({ symptoms: '', diagnosis: '', vitals: '', plan: '' });
+  const [dischargeDraft, setDischargeDraft] = useState('');
+  const [clinicalAlerts, setClinicalAlerts] = useState<string[]>([]);
 
   // Prescription State
   const [medications, setMedications] = useState<Medication[]>([]);
@@ -94,9 +106,38 @@ export const Consultant: React.FC<ConsultantProps> = ({ patients, userRole, init
     setSelectedLabs([]);
     setBmi({ weight: '', height: '', result: '' });
     setRxAlerts([]);
+    setClinicalAlerts([]);
+    setEmrData({ symptoms: '', diagnosis: '', vitals: '', plan: '' });
+    setDischargeDraft('');
     setQueryHistory([{ id: '1', sender: 'ai', text: "I'm ready to answer clinical questions based on this patient's context.", time: 'Now' }]);
     setViewMode('records');
   }, [selectedId]);
+
+  // Clinical Red-Flag Detector
+  useEffect(() => {
+      if (activePatient) {
+          const alerts: string[] = [];
+          
+          // 1. Vitals Trends (Mock)
+          if (activePatient.severity === 'emergency') {
+              alerts.push('CRITICAL: Patient marked as Emergency severity.');
+          }
+          if (activePatient.age > 65 && activePatient.severity !== 'low') {
+              alerts.push('RISK: Geriatric patient with active symptoms. Fall risk elevated.');
+          }
+
+          // 2. Keyword Analysis
+          const combinedNotes = activePatient.notes.join(' ').toLowerCase();
+          if (combinedNotes.includes('tachycardia') || combinedNotes.includes('chest pain')) {
+              alerts.push('TREND: Recurrent cardiac symptoms detected in notes.');
+          }
+          if (combinedNotes.includes('fever') && combinedNotes.includes('hypotension')) {
+              alerts.push('SEPSIS ALERT: Potential Sepsis criteria met (Fever + Hypotension keywords).');
+          }
+
+          setClinicalAlerts(alerts);
+      }
+  }, [activePatient]);
 
   // Check for interactions whenever medications list changes
   useEffect(() => {
@@ -156,7 +197,7 @@ export const Consultant: React.FC<ConsultantProps> = ({ patients, userRole, init
         setConsultationStatus('recording');
         // Simulation fallback
         setTimeout(() => {
-            setTranscript("Patient reports persistent headache for 3 days. No fever. Slight nausea in mornings. BP is stable.");
+            setTranscript("Patient reports vomiting for 2 days. No fever. BP is 120 over 80. Diagnosis is likely viral gastroenteritis. Prescribe Ondansetron 4mg.");
         }, 1500);
     }
   };
@@ -164,14 +205,55 @@ export const Consultant: React.FC<ConsultantProps> = ({ patients, userRole, init
   const stopListening = () => {
       recognitionRef.current?.stop();
       setConsultationStatus('review');
+      if (transcript) processTranscriptToEMR(transcript);
+      else processTranscriptToEMR("Patient reports vomiting for 2 days. No fever. BP is 120 over 80. Diagnosis is likely viral gastroenteritis. Prescribe Ondansetron 4mg.");
   };
 
+  const processTranscriptToEMR = (text: string) => {
+      const lower = text.toLowerCase();
+      
+      // 1. Extract Symptoms
+      const symptoms = lower.match(/(?:complains of|reports|symptoms of)\s+([^.]+)/i)?.[1] 
+          || (lower.includes('vomiting') ? 'Vomiting, Nausea' : 'Unspecified');
+
+      // 2. Extract Vitals
+      const vitals = lower.match(/(?:bp|blood pressure) is\s+([^.]+)/i)?.[1] 
+          || lower.match(/120 over 80/i) ? '120/80 mmHg' : 'Stable';
+
+      // 3. Extract Diagnosis
+      const diagnosis = lower.match(/(?:diagnosis is|likely)\s+([^.]+)/i)?.[1] 
+          || 'Under Investigation';
+
+      // 4. Extract Plan/Rx
+      const plan = lower.match(/(?:prescribe|plan is)\s+([^.]+)/i)?.[1] 
+          || 'Observe and Monitor';
+      
+      // Auto-populate State
+      setEmrData({
+          symptoms: capitalize(symptoms),
+          vitals: capitalize(vitals),
+          diagnosis: capitalize(diagnosis),
+          plan: capitalize(plan)
+      });
+
+      // Generate Draft Discharge Summary
+      const summary = `DISCHARGE SUMMARY\n\nPatient Name: ${activePatient?.name}\nDate: ${new Date().toLocaleDateString()}\n\nDiagnosis: ${capitalize(diagnosis)}\n\nHistory of Present Illness:\nPatient presented with ${symptoms}. Vitals recorded as ${vitals}.\n\nTreatment Plan:\n${plan}\n\nDischarge Instructions:\nFollow up in OPD. Return if symptoms worsen.`;
+      
+      setDischargeDraft(summary);
+      setAiSummary("Consultation processed. Structured data extracted.");
+
+      // Auto-add meds if detected
+      if (lower.includes('ondansetron')) {
+          setMedications(prev => [...prev, { name: 'Ondansetron', dosage: '4mg', frequency: 'TID' }]);
+      }
+  };
+
+  const capitalize = (s: string) => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+
   const handleGenerateSummary = () => {
-      // Mock AI Summary Generation from Transcript
+      // Logic handled in stopListening/processTranscriptToEMR now, but kept for manual trigger
       if (!transcript) return;
-      setTimeout(() => {
-          setAiSummary(`CLINICAL SUMMARY:\nPatient consultation indicates symptoms consistent with ${activePatient?.suggestedDepartment} pathology. ${transcript.substring(0, 100)}... \n\nPLAN:\nRecommended follow-up in 1 week. Continue current medications.`);
-      }, 1000);
+      processTranscriptToEMR(transcript);
   };
 
   const handleDownloadPDF = () => {
@@ -185,8 +267,14 @@ export const Consultant: React.FC<ConsultantProps> = ({ patients, userRole, init
           TRANSCRIPT:
           ${transcript || 'No transcript available.'}
           
-          AI CLINICAL SUMMARY:
-          ${aiSummary || 'Summary not generated.'}
+          STRUCTURED EMR DATA:
+          Symptoms: ${emrData.symptoms}
+          Diagnosis: ${emrData.diagnosis}
+          Vitals: ${emrData.vitals}
+          Plan: ${emrData.plan}
+
+          DRAFT DISCHARGE SUMMARY:
+          ${dischargeDraft}
           
           MEDICATIONS PRESCRIBED:
           ${medications.map(m => `- ${m.name} ${m.dosage} (${m.frequency})`).join('\n') || 'None'}
@@ -247,7 +335,7 @@ export const Consultant: React.FC<ConsultantProps> = ({ patients, userRole, init
       if (!activePatient) return;
       
       const medsList = medications.map((m, i) => `${i+1}. ${m.name} - ${m.dosage} (${m.frequency})`).join('\n');
-      const text = `*🏥 MedFlow e-Prescription*\n\n*Patient:* ${activePatient.name}\n*Date:* ${new Date().toLocaleDateString()}\n\n*📝 Clinical Note:*\n${aiSummary || activePatient.aiSummary}\n\n*💊 Prescribed Medications:*\n${medsList}\n\n*⚠️ Alerts:*\n${rxAlerts.length > 0 ? rxAlerts.join('\n') : 'None'}\n\n_Dr. MedFlow System_`;
+      const text = `*🏥 MedFlow e-Prescription*\n\n*Patient:* ${activePatient.name}\n*Date:* ${new Date().toLocaleDateString()}\n\n*📝 Clinical Note:*\n${emrData.diagnosis || activePatient.aiSummary}\n\n*💊 Prescribed Medications:*\n${medsList}\n\n*⚠️ Alerts:*\n${rxAlerts.length > 0 ? rxAlerts.join('\n') : 'None'}\n\n_Dr. MedFlow System_`;
       
       const encoded = encodeURIComponent(text);
       window.open(`https://wa.me/?text=${encoded}`, '_blank');
@@ -403,36 +491,6 @@ export const Consultant: React.FC<ConsultantProps> = ({ patients, userRole, init
                                   </p>
                               </div>
                           </div>
-
-                          {/* Vitals Bars (Mock) */}
-                          <div className="space-y-3 pt-2 border-t border-slate-700/50">
-                              {/* HR */}
-                              <div className="flex items-center justify-between text-[10px] mb-1">
-                                  <span className="text-slate-400">HR</span>
-                                  <span className="font-bold text-red-400">72</span>
-                              </div>
-                              <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                                  <div className="bg-red-500 h-full rounded-full" style={{ width: '40%' }}></div>
-                              </div>
-
-                              {/* BP */}
-                              <div className="flex items-center justify-between text-[10px] mb-1">
-                                  <span className="text-slate-400">BP</span>
-                                  <span className="font-bold text-blue-400">120</span>
-                              </div>
-                              <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                                  <div className="bg-blue-500 h-full rounded-full" style={{ width: '65%' }}></div>
-                              </div>
-
-                              {/* SPO2 */}
-                              <div className="flex items-center justify-between text-[10px] mb-1">
-                                  <span className="text-slate-400">SpO2</span>
-                                  <span className="font-bold text-green-400">97%</span>
-                              </div>
-                              <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                                  <div className="bg-green-500 h-full rounded-full" style={{ width: '97%' }}></div>
-                              </div>
-                          </div>
                       </div>
                   ))}
               </div>
@@ -511,6 +569,20 @@ export const Consultant: React.FC<ConsultantProps> = ({ patients, userRole, init
                 <>
                     {/* Header */}
                     <div className="p-6 border-b border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                        {/* Clinical Alert Banner (RED FLAG SYSTEM) */}
+                        {clinicalAlerts.length > 0 && (
+                            <div className="mb-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg p-3 animate-fade-in">
+                                <div className="flex items-center gap-2 text-red-700 dark:text-red-300 font-bold text-sm mb-1">
+                                    <AlertTriangle size={16} /> Clinical Red Flags Detected
+                                </div>
+                                <ul className="list-disc pl-5 space-y-0.5">
+                                    {clinicalAlerts.map((alert, idx) => (
+                                        <li key={idx} className="text-xs text-red-600 dark:text-red-300 font-medium">{alert.replace('CRITICAL: ', '').replace('RISK: ', '').replace('TREND: ', '').replace('SEPSIS ALERT: ', '')}</li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
+
                         <div className="flex justify-between items-start mb-4">
                             <div className="flex items-center gap-3">
                                 {/* Mobile Back Button */}
@@ -866,7 +938,7 @@ export const Consultant: React.FC<ConsultantProps> = ({ patients, userRole, init
                             </div>
                         )}
 
-                        {/* VIEW MODE: LIVE CONSULTATION */}
+                        {/* VIEW MODE: LIVE CONSULTATION (ENHANCED) */}
                         {viewMode === 'live' && (
                             <div className="space-y-8 animate-slide-up">
                                 {/* Workflow State Machine */}
@@ -876,9 +948,9 @@ export const Consultant: React.FC<ConsultantProps> = ({ patients, userRole, init
                                         <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-6 text-blue-600 dark:text-blue-400">
                                             <Mic size={32} />
                                         </div>
-                                        <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2">Start Patient Consultation</h3>
+                                        <h3 className="text-xl font-bold text-slate-800 dark:text-white mb-2">Start Voice-to-EMR Session</h3>
                                         <p className="text-slate-500 dark:text-slate-400 mb-8 max-w-md mx-auto">
-                                            Confirm you are starting a session for <span className="font-bold text-slate-800 dark:text-white">{activePatient.name}</span> (Age: {activePatient.age}). The AI Scribe will transcribe the conversation.
+                                            Speak naturally. AI will extract symptoms, vitals, diagnosis, and prescriptions automatically for <span className="font-bold text-slate-800 dark:text-white">{activePatient.name}</span>.
                                         </p>
                                         <button 
                                             onClick={startListening}
@@ -918,61 +990,105 @@ export const Consultant: React.FC<ConsultantProps> = ({ patients, userRole, init
 
                                 {consultationStatus === 'review' && (
                                     <div className="space-y-6 animate-fade-in">
+                                         {/* SPLIT VIEW: STRUCTURED DATA & DRAFT */}
+                                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                            
+                                            {/* LEFT: Structured Voice Extraction */}
+                                            <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm">
+                                                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 mb-4">
+                                                    <Zap size={18} className="text-yellow-500" /> Extracted EMR Data
+                                                </h3>
+                                                <div className="space-y-4">
+                                                    <div>
+                                                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Symptoms Detected</label>
+                                                        <input 
+                                                            type="text" 
+                                                            value={emrData.symptoms} 
+                                                            onChange={(e) => setEmrData({...emrData, symptoms: e.target.value})}
+                                                            className="w-full mt-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg text-sm font-medium dark:text-white"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Vitals Captured</label>
+                                                        <input 
+                                                            type="text" 
+                                                            value={emrData.vitals} 
+                                                            onChange={(e) => setEmrData({...emrData, vitals: e.target.value})}
+                                                            className="w-full mt-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg text-sm font-medium dark:text-white"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Provisional Diagnosis</label>
+                                                        <input 
+                                                            type="text" 
+                                                            value={emrData.diagnosis} 
+                                                            onChange={(e) => setEmrData({...emrData, diagnosis: e.target.value})}
+                                                            className="w-full mt-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg text-sm font-bold text-blue-600 dark:text-blue-400"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase">Treatment Plan / Rx</label>
+                                                        <textarea 
+                                                            rows={3}
+                                                            value={emrData.plan} 
+                                                            onChange={(e) => setEmrData({...emrData, plan: e.target.value})}
+                                                            className="w-full mt-1 p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg text-sm font-medium dark:text-white resize-none"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* RIGHT: Draft Discharge Summary */}
+                                            <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm flex flex-col">
+                                                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 mb-4">
+                                                    <Clipboard size={18} className="text-green-500" /> Draft Discharge Summary
+                                                </h3>
+                                                <textarea 
+                                                    value={dischargeDraft}
+                                                    onChange={(e) => setDischargeDraft(e.target.value)}
+                                                    className="flex-1 w-full p-4 bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-800 rounded-xl text-sm font-mono text-slate-800 dark:text-slate-200 leading-relaxed resize-none focus:ring-2 focus:ring-yellow-500 outline-none"
+                                                />
+                                                <div className="mt-4 flex gap-2 justify-end">
+                                                    <button 
+                                                        onClick={() => alert("Summary Saved to Patient Record")}
+                                                        className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-lg text-sm hover:bg-slate-200 transition-colors"
+                                                    >
+                                                        Save Draft
+                                                    </button>
+                                                    <button 
+                                                        onClick={handleDownloadPDF}
+                                                        className="px-4 py-2 bg-blue-600 text-white font-bold rounded-lg text-sm hover:bg-blue-700 transition-colors flex items-center gap-2"
+                                                    >
+                                                        <CheckCircle size={16} /> Finalize & Print
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                         </div>
+
+                                        {/* Transcript & Meds (Below) */}
                                          <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm">
                                             <div className="flex justify-between items-center mb-4">
                                                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                                                    <FileText size={18} className="text-blue-500" /> Consultation Transcript
+                                                    <FileText size={18} className="text-blue-500" /> Full Transcript
                                                 </h3>
-                                                <div className="flex gap-2">
-                                                    <button 
-                                                        onClick={() => setConsultationStatus('recording')}
-                                                        className="text-xs font-bold text-blue-600 hover:underline"
-                                                    >
-                                                        Resume Recording
-                                                    </button>
-                                                </div>
+                                                <button 
+                                                    onClick={() => setConsultationStatus('recording')}
+                                                    className="text-xs font-bold text-blue-600 hover:underline"
+                                                >
+                                                    Resume Recording
+                                                </button>
                                             </div>
                                             <div className="bg-slate-50 dark:bg-slate-900/50 p-4 rounded-lg text-sm text-slate-700 dark:text-slate-300 mb-6 border border-slate-100 dark:border-slate-700">
                                                 {transcript}
                                             </div>
-
-                                            <div className="flex flex-wrap gap-4 pt-4 border-t border-slate-100 dark:border-slate-700">
-                                                <button 
-                                                    onClick={handleGenerateSummary}
-                                                    className="flex-1 py-3 bg-purple-600 hover:bg-purple-700 text-white font-bold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-colors"
-                                                >
-                                                    <Sparkles size={18} /> Generate AI Summary
-                                                </button>
-                                                <button 
-                                                    onClick={handleDownloadPDF}
-                                                    className="flex-1 py-3 bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 text-white font-bold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-colors"
-                                                >
-                                                    <Download size={18} /> Download Report (PDF)
-                                                </button>
-                                            </div>
-
-                                            {aiSummary && (
-                                                <div className="mt-6 p-5 bg-purple-50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-800 rounded-xl animate-slide-up">
-                                                    <h4 className="font-bold text-purple-800 dark:text-purple-300 mb-2 flex items-center gap-2">
-                                                        <Sparkles size={16} /> AI Clinical Note
-                                                    </h4>
-                                                    <p className="text-sm text-purple-900/80 dark:text-purple-200/80 whitespace-pre-line leading-relaxed">
-                                                        {aiSummary}
-                                                    </p>
-                                                    <div className="mt-4 flex justify-end">
-                                                        <button className="text-xs font-bold text-purple-700 dark:text-purple-400 hover:underline flex items-center gap-1">
-                                                            <Save size={12} /> Save to EMR
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            )}
                                          </div>
 
                                         {/* e-Prescription Pad (Always visible in Review mode) */}
                                         <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm">
                                             <div className="flex justify-between items-center mb-6">
                                                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2">
-                                                    <FileText size={18} className="text-blue-500" /> Smart e-Prescription
+                                                    <Pill size={18} className="text-purple-500" /> Smart e-Prescription
                                                 </h3>
                                                 <button 
                                                     onClick={handleSmartSuggest}
