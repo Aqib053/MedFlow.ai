@@ -158,22 +158,4 @@ Analytics dashboard
 
 MIT License
 
-👤 Author
 
-Aqib
-GitHub: https://github.com/Aqib053
-
-🙏 Acknowledgements
-
-Built using modern web technologies and AI to explore how intelligent systems can improve real-world healthcare workflows.
-
-
----
-
-If you want next:
-- ✅ **Fix white screen issue (I already know why from your screenshots)**
-- ✅ **Refactor Gemini calls to avoid runtime crash**
-- ✅ **Add backend API for production**
-- ✅ **Create a live demo walkthrough**
-
-Say **“fix white screen now”** and we’ll solve it step-by-step without guessing.
